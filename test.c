@@ -31,6 +31,18 @@
 #include "picotest/picotest.h"
 #include "picohttpparser.h"
 
+struct headers {
+    struct phr_header header[4];
+    size_t num_headers;
+};
+
+static int header_callback(struct phr_header* header, void* user_data)
+{
+    struct headers* headers = (struct headers*)user_data;
+    memcpy(&headers->header[headers->num_headers++], header, sizeof(struct phr_header));
+    return 0;
+}
+
 static int bufis(const char *s, size_t l, const char *t)
 {
     return strlen(t) == l && memcmp(s, t, l) == 0;
@@ -38,84 +50,79 @@ static int bufis(const char *s, size_t l, const char *t)
 
 static void test_request(void)
 {
-    const char *method;
-    size_t method_len;
-    const char *path;
-    size_t path_len;
-    int minor_version;
-    struct phr_header headers[4];
-    size_t num_headers;
+    struct phr_request_line request_line;
+    struct headers headers;
 
 #define PARSE(s, last_len, exp, comment)                                                                                           \
     do {                                                                                                                           \
+        memset(&headers, 0, sizeof(struct headers));                                                                               \
         note(comment);                                                                                                             \
-        num_headers = sizeof(headers) / sizeof(headers[0]);                                                                        \
-        ok(phr_parse_request(s, sizeof(s) - 1, &method, &method_len, &path, &path_len, &minor_version, headers, &num_headers,      \
-                             last_len) == (exp == 0 ? strlen(s) : exp));                                                           \
+        ok(phr_parse_request(s, sizeof(s) - 1, &request_line, header_callback,                                                     \
+                             &headers, last_len) == (exp == 0 ? strlen(s) : exp));                                                 \
     } while (0)
 
     PARSE("GET / HTTP/1.0\r\n\r\n", 0, 0, "simple");
-    ok(num_headers == 0);
-    ok(bufis(method, method_len, "GET"));
-    ok(bufis(path, path_len, "/"));
-    ok(minor_version == 0);
+    ok(headers.num_headers == 0);
+    ok(bufis(request_line.method, request_line.method_len, "GET"));
+    ok(bufis(request_line.path, request_line.path_len, "/"));
+    ok(request_line.minor_version == 0);
 
     PARSE("GET / HTTP/1.0\r\n\r", 0, -2, "partial");
 
     PARSE("GET /hoge HTTP/1.1\r\nHost: example.com\r\nCookie: \r\n\r\n", 0, 0, "parse headers");
-    ok(num_headers == 2);
-    ok(bufis(method, method_len, "GET"));
-    ok(bufis(path, path_len, "/hoge"));
-    ok(minor_version == 1);
-    ok(bufis(headers[0].name, headers[0].name_len, "Host"));
-    ok(bufis(headers[0].value, headers[0].value_len, "example.com"));
-    ok(bufis(headers[1].name, headers[1].name_len, "Cookie"));
-    ok(bufis(headers[1].value, headers[1].value_len, ""));
+    ok(headers.num_headers == 2);
+    ok(bufis(request_line.method, request_line.method_len, "GET"));
+    ok(bufis(request_line.path, request_line.path_len, "/hoge"));
+    ok(request_line.minor_version == 1);
+    ok(bufis(headers.header[0].name, headers.header[0].name_len, "Host"));
+    ok(bufis(headers.header[0].value, headers.header[0].value_len, "example.com"));
+    ok(bufis(headers.header[1].name, headers.header[1].name_len, "Cookie"));
+    ok(bufis(headers.header[1].value, headers.header[1].value_len, ""));
 
     PARSE("GET /hoge HTTP/1.1\r\nHost: example.com\r\nUser-Agent: \343\201\262\343/1.0\r\n\r\n", 0, 0, "multibyte included");
-    ok(num_headers == 2);
-    ok(bufis(method, method_len, "GET"));
-    ok(bufis(path, path_len, "/hoge"));
-    ok(minor_version == 1);
-    ok(bufis(headers[0].name, headers[0].name_len, "Host"));
-    ok(bufis(headers[0].value, headers[0].value_len, "example.com"));
-    ok(bufis(headers[1].name, headers[1].name_len, "User-Agent"));
-    ok(bufis(headers[1].value, headers[1].value_len, "\343\201\262\343/1.0"));
+    ok(headers.num_headers == 2);
+    ok(bufis(request_line.method, request_line.method_len, "GET"));
+    ok(bufis(request_line.path, request_line.path_len, "/hoge"));
+    ok(request_line.minor_version == 1);
+    ok(bufis(headers.header[0].name, headers.header[0].name_len, "Host"));
+    ok(bufis(headers.header[0].value, headers.header[0].value_len, "example.com"));
+    ok(bufis(headers.header[1].name, headers.header[1].name_len, "User-Agent"));
+    ok(bufis(headers.header[1].value, headers.header[1].value_len, "\343\201\262\343/1.0"));
 
     PARSE("GET / HTTP/1.0\r\nfoo: \r\nfoo: b\r\n  \tc\r\n\r\n", 0, 0, "parse multiline");
-    ok(num_headers == 3);
-    ok(bufis(method, method_len, "GET"));
-    ok(bufis(path, path_len, "/"));
-    ok(minor_version == 0);
-    ok(bufis(headers[0].name, headers[0].name_len, "foo"));
-    ok(bufis(headers[0].value, headers[0].value_len, ""));
-    ok(bufis(headers[1].name, headers[1].name_len, "foo"));
-    ok(bufis(headers[1].value, headers[1].value_len, "b"));
-    ok(headers[2].name == NULL);
-    ok(bufis(headers[2].value, headers[2].value_len, "  \tc"));
+    ok(headers.num_headers == 3);
+    ok(bufis(request_line.method, request_line.method_len, "GET"));
+    ok(bufis(request_line.path, request_line.path_len, "/"));
+    ok(request_line.minor_version == 0);
+    ok(bufis(headers.header[0].name, headers.header[0].name_len, "foo"));
+    ok(bufis(headers.header[0].value, headers.header[0].value_len, ""));
+    ok(bufis(headers.header[1].name, headers.header[1].name_len, "foo"));
+    ok(bufis(headers.header[1].value, headers.header[1].value_len, "b"));
+    ok(headers.header[2].name == NULL);
+    ok(bufis(headers.header[2].value, headers.header[2].value_len, "  \tc"));
 
     PARSE("GET / HTTP/1.0\r\nfoo : ab\r\n\r\n", 0, 0, "parse header name with trailing space");
-    ok(num_headers == 1);
-    ok(bufis(method, method_len, "GET"));
-    ok(bufis(path, path_len, "/"));
-    ok(minor_version == 0);
-    ok(bufis(headers[0].name, headers[0].name_len, "foo "));
-    ok(bufis(headers[0].value, headers[0].value_len, "ab"));
+    ok(headers.num_headers == 1);
+    ok(bufis(request_line.method, request_line.method_len, "GET"));
+    ok(bufis(request_line.path, request_line.path_len, "/"));
+    ok(request_line.minor_version == 0);
+    ok(bufis(headers.header[0].name, headers.header[0].name_len, "foo "));
+    ok(bufis(headers.header[0].value, headers.header[0].value_len, "ab"));
 
     PARSE("GET", 0, -2, "incomplete 1");
-    ok(method == NULL);
+    ok(request_line.method == NULL);
     PARSE("GET ", 0, -2, "incomplete 2");
-    ok(bufis(method, method_len, "GET"));
+    ok(bufis(request_line.method, request_line.method_len, "GET"));
     PARSE("GET /", 0, -2, "incomplete 3");
-    ok(path == NULL);
+    ok(request_line.path == NULL);
     PARSE("GET / ", 0, -2, "incomplete 4");
-    ok(bufis(path, path_len, "/"));
+    ok(bufis(request_line.path, request_line.path_len, "/"));
     PARSE("GET / H", 0, -2, "incomplete 5");
     PARSE("GET / HTTP/1.", 0, -2, "incomplete 6");
     PARSE("GET / HTTP/1.0", 0, -2, "incomplete 7");
-    ok(minor_version == -1);
+    ok(request_line.minor_version == -1);
     PARSE("GET / HTTP/1.0\r", 0, -2, "incomplete 8");
-    ok(minor_version == 0);
+    ok(request_line.minor_version == 0);
 
     PARSE("GET /hoge HTTP/1.0\r\n\r", strlen("GET /hoge HTTP/1.0\r\n\r") - 1, -2, "slowloris (incomplete)");
     PARSE("GET /hoge HTTP/1.0\r\n\r\n", strlen("GET /hoge HTTP/1.0\r\n\r\n") - 1, 0, "slowloris (complete)");
@@ -131,95 +138,91 @@ static void test_request(void)
     PARSE("GET / HTTP/1.0\r\na\033b: c\r\n\r\n", 0, -1, "CTL in header name");
     PARSE("GET / HTTP/1.0\r\nab: c\033\r\n\r\n", 0, -1, "CTL in header value");
     PARSE("GET /\xa0 HTTP/1.0\r\nh: c\xa2y\r\n\r\n", 0, 0, "accept MSB chars");
-    ok(num_headers == 1);
-    ok(bufis(method, method_len, "GET"));
-    ok(bufis(path, path_len, "/\xa0"));
-    ok(minor_version == 0);
-    ok(bufis(headers[0].name, headers[0].name_len, "h"));
-    ok(bufis(headers[0].value, headers[0].value_len, "c\xa2y"));
+    ok(headers.num_headers == 1);
+    ok(bufis(request_line.method, request_line.method_len, "GET"));
+    ok(bufis(request_line.path, request_line.path_len, "/\xa0"));
+    ok(request_line.minor_version == 0);
+    ok(bufis(headers.header[0].name, headers.header[0].name_len, "h"));
+    ok(bufis(headers.header[0].value, headers.header[0].value_len, "c\xa2y"));
 
 #undef PARSE
 }
 
 static void test_response(void)
 {
-    int minor_version;
-    int status;
-    const char *msg;
-    size_t msg_len;
-    struct phr_header headers[4];
-    size_t num_headers;
+    struct phr_status_line status_line;
+    struct headers headers;
 
 #define PARSE(s, last_len, exp, comment)                                                                                           \
     do {                                                                                                                           \
+        memset(&headers, 0, sizeof(struct headers));                                                                               \
         note(comment);                                                                                                             \
-        num_headers = sizeof(headers) / sizeof(headers[0]);                                                                        \
-        ok(phr_parse_response(s, strlen(s), &minor_version, &status, &msg, &msg_len, headers, &num_headers, last_len) ==           \
+        ok(phr_parse_response(s, strlen(s), &status_line, header_callback, &headers, last_len) ==                                  \
            (exp == 0 ? strlen(s) : exp));                                                                                          \
     } while (0)
 
     PARSE("HTTP/1.0 200 OK\r\n\r\n", 0, 0, "simple");
-    ok(num_headers == 0);
-    ok(status == 200);
-    ok(minor_version = 1);
-    ok(bufis(msg, msg_len, "OK"));
+    ok(headers.num_headers == 0);
+    ok(status_line.status == 200);
+    ok(status_line.minor_version = 1);
+    ok(bufis(status_line.reason, status_line.reason_len, "OK"));
 
     PARSE("HTTP/1.0 200 OK\r\n\r", 0, -2, "partial");
 
     PARSE("HTTP/1.1 200 OK\r\nHost: example.com\r\nCookie: \r\n\r\n", 0, 0, "parse headers");
-    ok(num_headers == 2);
-    ok(minor_version == 1);
-    ok(status == 200);
-    ok(bufis(msg, msg_len, "OK"));
-    ok(bufis(headers[0].name, headers[0].name_len, "Host"));
-    ok(bufis(headers[0].value, headers[0].value_len, "example.com"));
-    ok(bufis(headers[1].name, headers[1].name_len, "Cookie"));
-    ok(bufis(headers[1].value, headers[1].value_len, ""));
+    ok(headers.num_headers == 2);
+    ok(status_line.minor_version == 1);
+    ok(status_line.status == 200);
+    ok(bufis(status_line.reason, status_line.reason_len, "OK"));
+    ok(bufis(headers.header[0].name, headers.header[0].name_len, "Host"));
+    ok(bufis(headers.header[0].value, headers.header[0].value_len, "example.com"));
+    ok(bufis(headers.header[1].name, headers.header[1].name_len, "Cookie"));
+    ok(bufis(headers.header[1].value, headers.header[1].value_len, ""));
 
     PARSE("HTTP/1.0 200 OK\r\nfoo: \r\nfoo: b\r\n  \tc\r\n\r\n", 0, 0, "parse multiline");
-    ok(num_headers == 3);
-    ok(minor_version == 0);
-    ok(status == 200);
-    ok(bufis(msg, msg_len, "OK"));
-    ok(bufis(headers[0].name, headers[0].name_len, "foo"));
-    ok(bufis(headers[0].value, headers[0].value_len, ""));
-    ok(bufis(headers[1].name, headers[1].name_len, "foo"));
-    ok(bufis(headers[1].value, headers[1].value_len, "b"));
-    ok(headers[2].name == NULL);
-    ok(bufis(headers[2].value, headers[2].value_len, "  \tc"));
+    ok(headers.num_headers == 3);
+    ok(status_line.minor_version == 0);
+    ok(status_line.status == 200);
+    ok(bufis(status_line.reason, status_line.reason_len, "OK"));
+    ok(bufis(headers.header[0].name, headers.header[0].name_len, "foo"));
+    ok(bufis(headers.header[0].value, headers.header[0].value_len, ""));
+    ok(bufis(headers.header[1].name, headers.header[1].name_len, "foo"));
+    ok(bufis(headers.header[1].value, headers.header[1].value_len, "b"));
+    ok(headers.header[2].name == NULL);
+    ok(bufis(headers.header[2].value, headers.header[2].value_len, "  \tc"));
 
     PARSE("HTTP/1.0 500 Internal Server Error\r\n\r\n", 0, 0, "internal server error");
-    ok(num_headers == 0);
-    ok(minor_version == 0);
-    ok(status == 500);
-    ok(bufis(msg, msg_len, "Internal Server Error"));
-    ok(msg_len == sizeof("Internal Server Error") - 1);
+    ok(headers.num_headers == 0);
+    ok(status_line.minor_version == 0);
+    ok(status_line.status == 500);
+    ok(bufis(status_line.reason, status_line.reason_len, "Internal Server Error"));
+    ok(status_line.reason_len == sizeof("Internal Server Error") - 1);
 
     PARSE("H", 0, -2, "incomplete 1");
     PARSE("HTTP/1.", 0, -2, "incomplete 2");
     PARSE("HTTP/1.1", 0, -2, "incomplete 3");
-    ok(minor_version == -1);
+    ok(status_line.minor_version == -1);
     PARSE("HTTP/1.1 ", 0, -2, "incomplete 4");
-    ok(minor_version == 1);
+    ok(status_line.minor_version == 1);
     PARSE("HTTP/1.1 2", 0, -2, "incomplete 5");
     PARSE("HTTP/1.1 200", 0, -2, "incomplete 6");
-    ok(status == 0);
+    ok(status_line.status == 0);
     PARSE("HTTP/1.1 200 ", 0, -2, "incomplete 7");
-    ok(status == 200);
+    ok(status_line.status == 200);
     PARSE("HTTP/1.1 200 O", 0, -2, "incomplete 8");
     PARSE("HTTP/1.1 200 OK\r", 0, -2, "incomplete 9");
-    ok(msg == NULL);
+    ok(status_line.reason == NULL);
     PARSE("HTTP/1.1 200 OK\r\n", 0, -2, "incomplete 10");
-    ok(bufis(msg, msg_len, "OK"));
+    ok(bufis(status_line.reason, status_line.reason_len, "OK"));
     PARSE("HTTP/1.1 200 OK\n", 0, -2, "incomplete 11");
-    ok(bufis(msg, msg_len, "OK"));
+    ok(bufis(status_line.reason, status_line.reason_len, "OK"));
 
     PARSE("HTTP/1.1 200 OK\r\nA: 1\r", 0, -2, "incomplete 11");
-    ok(num_headers == 0);
+    ok(headers.num_headers == 0);
     PARSE("HTTP/1.1 200 OK\r\nA: 1\r\n", 0, -2, "incomplete 12");
-    ok(num_headers == 1);
-    ok(bufis(headers[0].name, headers[0].name_len, "A"));
-    ok(bufis(headers[0].value, headers[0].value_len, "1"));
+    ok(headers.num_headers == 1);
+    ok(bufis(headers.header[0].name, headers.header[0].name_len, "A"));
+    ok(bufis(headers.header[0].value, headers.header[0].value_len, "1"));
 
     PARSE("HTTP/1.0 200 OK\r\n\r", strlen("HTTP/1.0 200 OK\r\n\r") - 1, -2, "slowloris (incomplete)");
     PARSE("HTTP/1.0 200 OK\r\n\r\n", strlen("HTTP/1.0 200 OK\r\n\r\n") - 1, 0, "slowloris (complete)");
@@ -234,30 +237,28 @@ static void test_response(void)
 static void test_headers(void)
 {
     /* only test the interface; the core parser is tested by the tests above */
-
-    struct phr_header headers[4];
-    size_t num_headers;
+    struct headers headers;
 
 #define PARSE(s, last_len, exp, comment)                                                                                           \
     do {                                                                                                                           \
+        memset(&headers, 0, sizeof(struct headers));                                                                               \
         note(comment);                                                                                                             \
-        num_headers = sizeof(headers) / sizeof(headers[0]);                                                                        \
-        ok(phr_parse_headers(s, strlen(s), headers, &num_headers, last_len) == (exp == 0 ? strlen(s) : exp));                      \
+        ok(phr_parse_headers(s, strlen(s), header_callback, &headers, last_len) == (exp == 0 ? strlen(s) : exp));                  \
     } while (0)
 
     PARSE("Host: example.com\r\nCookie: \r\n\r\n", 0, 0, "simple");
-    ok(num_headers == 2);
-    ok(bufis(headers[0].name, headers[0].name_len, "Host"));
-    ok(bufis(headers[0].value, headers[0].value_len, "example.com"));
-    ok(bufis(headers[1].name, headers[1].name_len, "Cookie"));
-    ok(bufis(headers[1].value, headers[1].value_len, ""));
+    ok(headers.num_headers == 2);
+    ok(bufis(headers.header[0].name, headers.header[0].name_len, "Host"));
+    ok(bufis(headers.header[0].value, headers.header[0].value_len, "example.com"));
+    ok(bufis(headers.header[1].name, headers.header[1].name_len, "Cookie"));
+    ok(bufis(headers.header[1].value, headers.header[1].value_len, ""));
 
     PARSE("Host: example.com\r\nCookie: \r\n\r\n", 1, 0, "slowloris");
-    ok(num_headers == 2);
-    ok(bufis(headers[0].name, headers[0].name_len, "Host"));
-    ok(bufis(headers[0].value, headers[0].value_len, "example.com"));
-    ok(bufis(headers[1].name, headers[1].name_len, "Cookie"));
-    ok(bufis(headers[1].value, headers[1].value_len, ""));
+    ok(headers.num_headers == 2);
+    ok(bufis(headers.header[0].name, headers.header[0].name_len, "Host"));
+    ok(bufis(headers.header[0].value, headers.header[0].value_len, "example.com"));
+    ok(bufis(headers.header[1].name, headers.header[1].name_len, "Cookie"));
+    ok(bufis(headers.header[1].value, headers.header[1].value_len, ""));
 
     PARSE("Host: example.com\r\nCookie: \r\n\r", 0, -2, "partial");
 

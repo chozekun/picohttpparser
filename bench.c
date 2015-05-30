@@ -26,6 +26,8 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
+#include <time.h>
 #include "picohttpparser.h"
 
 #define REQ                                                                                                                        \
@@ -44,23 +46,35 @@
     "__utmz=xxxxxxxxx.xxxxxxxxxx.x.x.utmccn=(referral)|utmcsr=reader.livedoor.com|utmcct=/reader/|utmcmd=referral\r\n"             \
     "\r\n"
 
+struct headers {
+    struct phr_header header[16];
+    size_t num_headers;
+};
+
+static int header_callback(struct phr_header* header, void* user_data)
+{
+    struct headers* headers = (struct headers*)user_data;
+    memcpy(&headers->header[headers->num_headers++], header, sizeof(struct phr_header));
+    return 0;
+}
+
 int main(void)
 {
-    const char *method;
-    size_t method_len;
-    const char *path;
-    size_t path_len;
-    int minor_version;
-    struct phr_header headers[32];
-    size_t num_headers;
+    struct phr_request_line request_line;
+    struct headers headers;
     int i, ret;
+    float start, end;
 
-    for (i = 0; i < 10000000; i++) {
-        num_headers = sizeof(headers) / sizeof(headers[0]);
-        ret = phr_parse_request(REQ, sizeof(REQ) - 1, &method, &method_len, &path, &path_len, &minor_version, headers, &num_headers,
+    start = (float)clock()/CLOCKS_PER_SEC;
+    for (i = 0; i < 1000000; i++) {
+        memset(&headers, 0, sizeof(struct headers));
+        ret = phr_parse_request(REQ, sizeof(REQ) - 1, &request_line, header_callback, &headers,
                                 0);
         assert(ret == sizeof(REQ) - 1);
     }
+    end = (float)clock()/CLOCKS_PER_SEC;
+
+    printf("Elapsed %f seconds.\n", (end - start));
 
     return 0;
 }

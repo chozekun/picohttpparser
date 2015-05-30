@@ -48,17 +48,34 @@ struct phr_header {
     size_t value_len;
 };
 
+struct phr_request_line {
+    const char* method;
+    size_t method_len;
+    const char* path;
+    size_t path_len;
+    int minor_version;
+};
+
+struct phr_status_line {
+    int minor_version;
+    int status;
+    const char* reason;
+    size_t reason_len;
+};
+
+typedef int (*phr_header_callback)(struct phr_header* header, void* user_data);
+
 /* returns number of bytes consumed if successful, -2 if request is partial,
  * -1 if failed */
-int phr_parse_request(const char *buf, size_t len, const char **method, size_t *method_len, const char **path, size_t *path_len,
-                      int *minor_version, struct phr_header *headers, size_t *num_headers, size_t last_len);
+int phr_parse_request(const char *buf, size_t len,
+        struct phr_request_line* request_line, phr_header_callback header_callback, void* user_data, size_t last_len);
 
 /* ditto */
-int phr_parse_response(const char *_buf, size_t len, int *minor_version, int *status, const char **msg, size_t *msg_len,
-                       struct phr_header *headers, size_t *num_headers, size_t last_len);
+int phr_parse_response(const char *buf, size_t len,
+        struct phr_status_line* status_line, phr_header_callback header_callback, void* user_data, size_t last_len);
 
 /* ditto */
-int phr_parse_headers(const char *buf, size_t len, struct phr_header *headers, size_t *num_headers, size_t last_len);
+int phr_parse_headers(const char *buf, size_t len, phr_header_callback header_callback, void* user_data, size_t last_len);
 
 /* should be zero-filled before start */
 struct phr_chunked_decoder {
